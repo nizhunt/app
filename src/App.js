@@ -4,6 +4,8 @@ import { ethers } from "ethers";
 function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [signer, setSigner] = useState(null);
+  const [signature, setSignature] = useState(null);
+  const message = "600"; // Message representing 6% Profit
 
   // Function to connect to MetaMask
   const connectMetaMask = async () => {
@@ -11,23 +13,25 @@ function App() {
       try {
         await window.ethereum.request({ method: "eth_requestAccounts" });
         const provider = new ethers.providers.Web3Provider(window.ethereum);
-        console.log("Provider:", provider);
-        setSigner(provider.getSigner());
-        console.log("Signer:", provider.getSigner());
+        const signer = provider.getSigner();
+        setSigner(signer);
         setIsConnected(true);
       } catch (error) {
-        console.error(error);
+        console.error("Error connecting to MetaMask:", error);
       }
     } else {
       console.log("MetaMask is not installed!");
     }
   };
 
-  // EIP-712 signing function
-  const signData = async () => {
-    if (!signer) return;
+  // Function for EIP-712 signing
+  const signDataEip721 = async () => {
+    if (!signer) {
+      console.error("Signer is not set");
+      return;
+    }
 
-    // All properties on a domain are optional
+    // Define the domain and types for EIP-712
     const domain = {
       name: "IncognitoInsight",
       version: "0.0.1",
@@ -36,8 +40,7 @@ function App() {
       salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
     };
 
-    // The named list of all type definitions
-    let types = {
+    const types = {
       Challenge: [
         { name: "challengerAddress", type: "address" },
         { name: "platform", type: "address" },
@@ -56,7 +59,6 @@ function App() {
       ],
     };
 
-    // The data to sign
     const value = {
       challengerAddress: "0x0000000000000000000000000000000000000000",
       platform: "0x0000000000000000000000000000000000000000",
@@ -70,15 +72,114 @@ function App() {
       expectedProfitPercentage: 500,
       actualProfitPercentage: 600,
       solverAddress: "0x0000000000000000000000000000000000000000",
-      solverNickname: "############################test",
+      solverNickname: "SolverNickname",
     };
 
     try {
       const signature = await signer._signTypedData(domain, types, value);
+      setSignature(signature);
       console.log("Signature:", signature);
     } catch (error) {
-      console.error(error);
+      console.error("Error signing data (EIP-712):", error);
     }
+  };
+
+  // Function to sign a simple message
+  const signDataSimple = async () => {
+    if (!signer) {
+      console.error("Signer is not set");
+      return;
+    }
+
+    try {
+      const signature = await signer.signMessage(message);
+      setSignature(signature);
+      console.log("Signature:", signature);
+    } catch (error) {
+      console.error("Error signing message:", error);
+    }
+  };
+
+  // Function to get signature information
+  const logSignatureInfo = async () => {
+    if (!signer) {
+      console.error("Signer is not set");
+      return;
+    }
+
+    try {
+      const {
+        messageDigestBytes,
+        publicKeyXBytes,
+        publicKeyYBytes,
+        signatureBytes,
+      } = await getSignatureInfo(message, signature);
+
+      // Create log string
+      const logData = `
+      Message Hash (Bytes): ${messageDigestBytes}
+      Public Key X (Bytes): ${publicKeyXBytes}
+      Public Key Y (Bytes): ${publicKeyYBytes}
+      Signature (Bytes): ${signatureBytes}
+    `;
+
+      // Log data to console
+      console.log(logData);
+
+      // Create a blob from the log data
+      const blob = new Blob([logData], { type: "text/plain" });
+
+      // Create a link element to download the file
+      const downloadLink = document.createElement("a");
+      downloadLink.href = URL.createObjectURL(blob);
+      downloadLink.download = "signatureInfo.txt";
+
+      // Append the link to the body and click it to trigger download
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+
+      // Clean up: remove the link element
+      document.body.removeChild(downloadLink);
+    } catch (error) {
+      console.error("Error logging signature info:", error);
+    }
+  };
+
+  // Function to get signature information
+  const getSignatureInfo = async (message, signature) => {
+    // Compute the message's digest
+    const messageDigest = ethers.utils.hashMessage(message);
+    const messageDigestBytes = ethers.utils.arrayify(messageDigest);
+
+    // Recover the public key
+    const publicKey = ethers.utils.recoverPublicKey(messageDigest, signature);
+
+    // Remove the '0x04' prefix from the uncompressed public key
+    const publicKeyNoPrefix = publicKey.slice(4);
+
+    // Extract X and Y coordinates (each coordinate is 64 characters long in hex)
+    const publicKeyX = publicKeyNoPrefix.substring(0, 64);
+    const publicKeyXBytes = ethers.utils.arrayify("0x" + publicKeyX);
+    const publicKeyY = publicKeyNoPrefix.substring(64);
+    const publicKeyYBytes = ethers.utils.arrayify("0x" + publicKeyY);
+
+    // Split the signature into r, s, and v components
+    const r = signature.slice(0, 66); // First 32 bytes
+    const s = "0x" + signature.slice(66, 130); // Next 32 bytes
+
+    // Convert r and s to byte arrays
+    const rBytes = ethers.utils.arrayify(r);
+    const sBytes = ethers.utils.arrayify(s);
+
+    // Concatenate r and s to get a 64-byte array
+    const signatureBytes = new Uint8Array([...rBytes, ...sBytes]);
+
+    return {
+      messageDigestBytes,
+      publicKeyXBytes,
+      publicKeyYBytes,
+      signatureBytes,
+    };
   };
 
   return (
@@ -87,7 +188,10 @@ function App() {
         {!isConnected && (
           <button onClick={connectMetaMask}>Connect to MetaMask</button>
         )}
-        {isConnected && <button onClick={signData}>Sign Message</button>}
+        {isConnected && <button onClick={signDataSimple}>Sign Message</button>}
+        {isConnected && signature && (
+          <button onClick={logSignatureInfo}>Get PubKey</button>
+        )}
       </header>
     </div>
   );
